@@ -56,9 +56,6 @@ type DenoliverOptions = {
 
 type Interceptor = (r: ServerRequest) => ServerRequest
 
-/* Initialize file watcher */
-let watcher: AsyncIterableIterator<Deno.FsEvent>
-
 /* Server */
 let server: Server
 let networkAddr: string | undefined
@@ -131,9 +128,8 @@ const handleDirRequest = async (req: ServerRequest): Promise<void> => {
 }
 
 const handleWs = async (req: ServerRequest): Promise<void> => {
-  if (!watcher) {
-    watcher = Deno.watchFs(root, { recursive: true })
-  }
+  const watcher = Deno.watchFs(root, { recursive: true })
+
   try {
     const { conn, r: bufReader, w: bufWriter, headers } = req
     const socket = await acceptWebSocket({
@@ -145,7 +141,10 @@ const handleWs = async (req: ServerRequest): Promise<void> => {
 
     for await (const event of watcher) {
       if (event.kind === 'modify') {
-        await socket.send('reload')
+        if (!socket.isClosed) {
+          await socket.send('reload')
+        }
+        break;
       }
     }
   } catch (err) {
@@ -153,7 +152,7 @@ const handleWs = async (req: ServerRequest): Promise<void> => {
   }
 }
 
-const handleNotFound = async (req: ServerRequest): Promise<void> => {
+const handleNotFound = (req: ServerRequest): Promise<void> => {
   return req.respond({
     status: 404,
     headers: setHeaders(cors),
@@ -168,7 +167,7 @@ const router = async (req: ServerRequest): Promise<void> => {
     }
     printRequest(req)
     if (!disableReload && isWebSocket(req)) {
-      return await handleWs(req)
+      return handleWs(req)
     }
     if (req.method === 'GET' && req.url === '/') {
       return handleRouteRequest(req)
